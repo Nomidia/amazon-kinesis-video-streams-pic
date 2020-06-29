@@ -16,6 +16,7 @@ option(THREAD_SANITIZER "Build with ThreadSanitizer." OFF)
 option(UNDEFINED_BEHAVIOR_SANITIZER "Build with UndefinedBehaviorSanitizer." OFF)
 option(BUILD_DEBUG_HEAP "Build debug heap with guard bands and validation." OFF)
 option(ALIGNED_MEMORY_MODEL "Aligned memory model ONLY." OFF)
+option(FIXUP_ANNEX_B_TRAILING_NALU_ZERO "Fix-up some bad encoder behavior leaving a trailing zero at the end of NALu" OFF)
 
 if(CODE_COVERAGE)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -fprofile-arcs -ftest-coverage")
@@ -46,13 +47,18 @@ endif()
 if(ALIGNED_MEMORY_MODEL)
   add_definitions(-DALIGNED_MEMORY_MODEL)
 endif()
+if(FIXUP_ANNEX_B_TRAILING_NALU_ZERO)
+  add_definitions(-DFIXUP_ANNEX_B_TRAILING_NALU_ZERO)
+endif()
 
 if(BUILD_DEPENDENCIES)
-  set(OPEN_SRC_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/open-source)
-  if(NOT EXISTS ${OPEN_SRC_INSTALL_PREFIX})
-    file(MAKE_DIRECTORY ${OPEN_SRC_INSTALL_PREFIX})
+  if (NOT OPEN_SRC_INSTALL_PREFIX)
+    set(OPEN_SRC_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/open-source)
+    if(NOT EXISTS ${OPEN_SRC_INSTALL_PREFIX})
+      file(MAKE_DIRECTORY ${OPEN_SRC_INSTALL_PREFIX})
+    endif()
+    set(ENV{PKG_CONFIG_PATH} "$ENV{PKG_CONFIG_PATH}:${OPEN_SRC_INSTALL_PREFIX}/lib/pkgconfig")
   endif()
-  set(ENV{PKG_CONFIG_PATH} "$ENV{PKG_CONFIG_PATH}:${OPEN_SRC_INSTALL_PREFIX}/lib/pkgconfig")
 
   if(BUILD_TEST)
     build_dependency(gtest)
@@ -149,7 +155,7 @@ install(
   DESTINATION .)
 
 install(
-  FILES 
+  FILES
     ${CMAKE_CURRENT_BINARY_DIR}/libkvspic.pc
     ${CMAKE_CURRENT_BINARY_DIR}/libkvspicClient.pc
     ${CMAKE_CURRENT_BINARY_DIR}/libkvspicState.pc
@@ -179,7 +185,7 @@ if(BUILD_TEST)
           ${PIC_TRACE_SOURCE_FILES}
           ${PIC_UTILS_SOURCE_FILES}
           ${PIC_VIEW_SOURCE_FILES})
-  target_compile_definitions(kvspic_test PRIVATE ALIGNED_MEMORY_MODEL=TRUE)
+  target_compile_definitions(kvspic_test PRIVATE ALIGNED_MEMORY_MODEL=TRUE FIXUP_ANNEX_B_TRAILING_NALU_ZERO=TRUE)
   target_link_libraries(kvspic_test ${GTEST_LIBNAME} ${CMAKE_DL_LIBS} Threads::Threads)
   if(UNIX AND NOT APPLE)
     # rt needed for clock_gettime
