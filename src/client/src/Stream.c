@@ -119,8 +119,8 @@ STATUS createStream(PKinesisVideoClient pKinesisVideoClient, PStreamInfo pStream
     // Shouldn't reset the generator on next key frame
     pKinesisVideoStream->resetGeneratorOnKeyFrame = FALSE;
 
-    // Shouldn't skip frames
-    pKinesisVideoStream->skipNonKeyFrames = FALSE;
+    // Skip non-key frames at start
+    pKinesisVideoStream->skipNonKeyFrames = TRUE;
 
     // Shouldn't reset the generator so set invalid time
     pKinesisVideoStream->resetGeneratorTime = INVALID_TIMESTAMP_VALUE;
@@ -2890,9 +2890,10 @@ STATUS packageStreamMetadata(PKinesisVideoStream pKinesisVideoStream, MKV_STREAM
         // If we have a persistent metadata then enqueue it back
         if (pSerializedMetadata->persistent) {
             CHK_STATUS(stackQueueEnqueue(pKinesisVideoStream->pMetadataQueue, item));
+            pSerializedMetadata = NULL;
         } else {
             // Delete the allocation otherwise
-            MEMFREE(pSerializedMetadata);
+            SAFE_MEMFREE(pSerializedMetadata);
         }
     }
 
@@ -2901,6 +2902,8 @@ CleanUp:
     if (STATUS_SUCCEEDED(retStatus)) {
         // Set the size and the state before return
         *pSize = packagedSize;
+    } else {
+        SAFE_MEMFREE(pSerializedMetadata);
     }
 
     LEAVES();

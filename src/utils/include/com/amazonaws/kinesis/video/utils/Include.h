@@ -25,6 +25,22 @@ extern "C" {
 #define IS_WHITE_SPACE(ch)          (((ch) == ' ') || ((ch) == '\t') || ((ch) == '\r') || ((ch) == '\n') || ((ch) == '\v') ||  ((ch) == '\f'))
 
 /**
+* EMA (Exponential Moving Average) alpha value and 1-alpha value - over appx 20 samples
+*/
+#define EMA_ALPHA_VALUE                 ((DOUBLE) 0.05)
+#define ONE_MINUS_EMA_ALPHA_VALUE       ((DOUBLE) (1 - EMA_ALPHA_VALUE))
+
+/**
+ * Calculates the EMA (Exponential Moving Average) accumulator value
+ *
+ * a - Accumulator value
+ * v - Next sample point
+ *
+ * @return the new Accumulator value
+ */
+#define EMA_ACCUMULATOR_GET_NEXT(a, v)    (DOUBLE) (EMA_ALPHA_VALUE * (v) + ONE_MINUS_EMA_ALPHA_VALUE * (a))
+
+/**
  * Error values
  */
 #define STATUS_UTILS_BASE                               0x40000000
@@ -92,6 +108,17 @@ PUBLIC_API STATUS strtoi64(PCHAR, PCHAR, UINT32, PINT64);
  * @return - Pointer to the first occurrence or NULL
  */
 PUBLIC_API PCHAR strnchr(PCHAR, UINT32, CHAR);
+
+/**
+ * Safe variant of strstr. This is a default implementation for strnstr when not available.
+ *
+ * @param 1 - IN - Input string to process
+ * @param 3 - IN - The string to look for
+ * @param 2 - IN - String length.
+ *
+ * @return - Pointer to the first occurrence or NULL
+ */
+PUBLIC_API PCHAR defaultStrnstr(PCHAR, PCHAR, SIZE_T);
 
 /**
  * Left and right trim of the whitespace
