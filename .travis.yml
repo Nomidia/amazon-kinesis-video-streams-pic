@@ -18,7 +18,7 @@ script:
   - export AWS_KVS_LOG_LEVEL=7
   - make
   - ulimit -c unlimited -S
-  - timeout --signal=SIGABRT 20m ./kvspic_test --gtest_filter="-TimerQueueFunctionalityTest.*:HeapPerfTest.*"
+  - timeout --signal=SIGABRT 40m ./kvspic_test --gtest_filter="-TimerQueueFunctionalityTest.*:HeapPerfTest.*"
 
 after_failure:
   - for i in $(find ./ -maxdepth 1 -name 'core*' -print); do gdb $(pwd)/kvspic_test core* -ex "thread apply all bt" -ex "set pagination 0" -batch; done;
@@ -29,6 +29,18 @@ matrix:
     - env: allowTestFail=true
 
   include:
+    #clang check
+    - name: "clang-format Check"
+      os: linux
+      compiler: clang
+      before_script:
+        - sudo apt-get -q update
+        - sudo apt-get -y install clang-format
+        - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Debug -DBUILD_TEST=TRUE
+      script:
+        - cd ..
+        - bash scripts/check-clang.sh
+
     # MacOS Builds
     - name: "OSX GCC"
       os: osx
@@ -85,8 +97,11 @@ matrix:
     - name: "Linux Clang ThreadSanitizer"
       os: linux
       compiler: clang
-      env: allowTestFail=true
+      env: TSAN_OPTIONS=halt_on_error=1:suppressions=../src/utils/tst/suppressions/TSAN.supp
       before_script: mkdir build && cd build && cmake .. -DBUILD_TEST=TRUE -DTHREAD_SANITIZER=TRUE
+      script:
+        - make
+        - AWS_KVS_LOG_LEVEL=7 ./kvspic_test --gtest_break_on_failure --gtest_filter="-TimerQueueFunctionalityTest.*:HeapPerfTest.*:ThreadFunctionalityTest.ThreadCreateAndCancel"
 
     # Old Version GCC 4.4
     - name: "Linux GCC 4.4 Build"
@@ -124,4 +139,4 @@ matrix:
           - unset CC CC_FOR_BUILD CXX CXX_FOR_BUILD # We want to use MSVC
           - .github/build_windows.bat
           - export "AWS_KVS_LOG_LEVEL=7"
-          - cd build && ./kvspic_test.exe --gtest_filter="-TimerQueueFunctionalityTest.*:HeapPerfTest.*:PermutatedStreamInfo/StateTransitionFunctionalityTest.ControlPlaneServiceCallExhaustRetry*"
+          - cd build && ./kvspic_test.exe --gtest_filter="-TimerQueueFunctionalityTest.*:HeapPerfTest.*:PermutatedStreamInfo/StateTransitionFunctionalityTest.ControlPlaneServiceCallExhaustRetry*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.ValidateTimerInvokedBeforeTime*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.ValidateTimerInvokedAfterFirstPeriod*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.ValidateLastUpdateTimeOfStreamUpdated*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.MultiTrackVerifyNoInvocationsWithSingleTrackProducer*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.ValidateNoConsecutiveEOFR*:PermutatedStreamInfo/IntermittentProducerAutomaticStreamingTest.ValidateErrorOnForceConsecutiveEOFR*"

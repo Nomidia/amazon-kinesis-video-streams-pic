@@ -69,8 +69,7 @@ STATUS freeFrameOrderCoordinator(PKinesisVideoStream pKinesisVideoStream, PFrame
     CHK(pFrameOrderCoordinator != NULL, retStatus);
     pKinesisVideoClient = pKinesisVideoStream->pKinesisVideoClient;
 
-    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                     pFrameOrderCoordinator->lock);
+    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
 
     // free the queue and its frames.
     for (i = 0; i < pFrameOrderCoordinator->putFrameTrackDataListCount; ++i) {
@@ -79,10 +78,8 @@ STATUS freeFrameOrderCoordinator(PKinesisVideoStream pKinesisVideoStream, PFrame
     }
 
     // unlock and free the lock
-    pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                       pFrameOrderCoordinator->lock);
-    pKinesisVideoClient->clientCallbacks.freeMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                     pFrameOrderCoordinator->lock);
+    pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
+    pKinesisVideoClient->clientCallbacks.freeMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
 
     // free the entire struct
     MEMFREE(pFrameOrderCoordinator);
@@ -94,21 +91,22 @@ CleanUp:
     return retStatus;
 }
 
-STATUS audioVideoFrameTimestampComparator(PFrameOrderTrackData pFrameOrderTrackData1, PFrameOrderTrackData pFrameOrderTrackData2,
-                                          UINT64 customData, PBOOL pFirstFrameFirst)
+STATUS audioVideoFrameTimestampComparator(PFrameOrderTrackData pFrameOrderTrackData1, PFrameOrderTrackData pFrameOrderTrackData2, UINT64 customData,
+                                          PBOOL pFirstFrameFirst)
 {
     PStreamInfo pStreamInfo = (PStreamInfo) customData;
     UINT64 mkvTimestamp1, mkvTimestamp2, item;
-    BOOL firstFrameFirst = FALSE;
-    PFrame pFirst = NULL, pSecond = NULL, pSwap = NULL;
+    BOOL firstFrameFirst;
+    PFrame pFirst, pSecond, pSwap;
     STATUS retStatus = STATUS_SUCCESS;
 
-    CHK(pFirstFrameFirst != NULL && pFrameOrderTrackData1 != NULL && pFrameOrderTrackData2 != NULL, STATUS_NULL_ARG);
+    CHK(pFirstFrameFirst != NULL && pFrameOrderTrackData1 != NULL && pFrameOrderTrackData2 != NULL && pStreamInfo != NULL, STATUS_NULL_ARG);
 
     CHK(pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE ||
-        pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE ||
-        pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR ||
-        pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE_EOFR, retStatus);
+            pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE ||
+            pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR ||
+            pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE_EOFR,
+        retStatus);
 
     CHK_STATUS(stackQueuePeek(pFrameOrderTrackData1->frameQueue, &item));
     pFirst = (PFrame) item;
@@ -116,7 +114,7 @@ STATUS audioVideoFrameTimestampComparator(PFrameOrderTrackData pFrameOrderTrackD
     pSecond = (PFrame) item;
 
     if (pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE ||
-            pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR) {
+        pStreamInfo->streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR) {
         mkvTimestamp1 = pFirst->decodingTs;
         mkvTimestamp2 = pSecond->decodingTs;
     } else {
@@ -132,8 +130,13 @@ STATUS audioVideoFrameTimestampComparator(PFrameOrderTrackData pFrameOrderTrackD
     // if two frames from different tracks have same mkv timestamps, and the latter frame has a KEY_FRAME_FLAG set,
     // then move KEY_FRAME_FLAG to the earlier frame. Because we cant have frame before key frame that has the same
     // mkv timestamp as the key frame.
-    if (mkvTimestamp1 == mkvTimestamp2 && pFrameOrderTrackData1->pTrackInfo->trackType != pFrameOrderTrackData2->pTrackInfo->trackType) {
-        if (!firstFrameFirst) {
+    // In case of the same MKV timestamps with the same track we won't do any auto-adjustment
+    // and will let the call fail later with the same timestamps in the main PutFrame API call
+    if (mkvTimestamp1 == mkvTimestamp2 &&
+        pFrameOrderTrackData1->pTrackInfo->trackType != pFrameOrderTrackData2->pTrackInfo->trackType) {
+
+        // If the first frame does not have key frame flag but the second does the we swap
+        if (!CHECK_FRAME_FLAG_KEY_FRAME(pFirst->flags) && CHECK_FRAME_FLAG_KEY_FRAME(pSecond->flags)) {
             pSwap = pFirst;
             pFirst = pSecond;
             pSecond = pSwap;
@@ -141,9 +144,7 @@ STATUS audioVideoFrameTimestampComparator(PFrameOrderTrackData pFrameOrderTrackD
 
         // add 1 unit of mkvTimecodeScale to the latter frame if it has key frame flag so that backend dont complain
         // about fragment overlap. No need to change dts as it determines frame order and mkv contains pts only.
-        if (CHECK_FRAME_FLAG_KEY_FRAME(pSecond->flags)) {
-            pSecond->presentationTs += pStreamInfo->streamCaps.timecodeScale;
-        }
+        pSecond->presentationTs += pStreamInfo->streamCaps.timecodeScale;
     }
 
 CleanUp:
@@ -155,7 +156,7 @@ CleanUp:
     return retStatus;
 }
 
-STATUS getEarliestTrack(PFrameOrderCoordinator pFrameOrderCoordinator, PFrameOrderTrackData *ppEarliestPutFrameTrackData)
+STATUS getEarliestTrack(PFrameOrderCoordinator pFrameOrderCoordinator, PFrameOrderTrackData* ppEarliestPutFrameTrackData)
 {
     STATUS retStatus = STATUS_SUCCESS;
     UINT32 minIndex = 0, i;
@@ -166,17 +167,17 @@ STATUS getEarliestTrack(PFrameOrderCoordinator pFrameOrderCoordinator, PFrameOrd
     CHK(pFrameOrderCoordinator->trackWithFrame > 0, retStatus);
 
     // find the first track that has frame.
-    for (; minIndex < pFrameOrderCoordinator->putFrameTrackDataListCount &&
-           pFrameOrderCoordinator->putFrameTrackDataList[minIndex].frameCount == 0; ++minIndex);
+    for (; minIndex < pFrameOrderCoordinator->putFrameTrackDataListCount && pFrameOrderCoordinator->putFrameTrackDataList[minIndex].frameCount == 0;
+         ++minIndex)
+        ;
 
     // Assumes the track found previously is the earliest, compare its first frame with rest of
     // of the tracks that has frame.
     for (i = minIndex + 1; i < pFrameOrderCoordinator->putFrameTrackDataListCount; ++i) {
         if (pFrameOrderCoordinator->putFrameTrackDataList[i].frameCount != 0) {
-            CHK_STATUS(pFrameOrderCoordinator->frameTimestampCompareFn(
-                    &pFrameOrderCoordinator->putFrameTrackDataList[minIndex],
-                    &pFrameOrderCoordinator->putFrameTrackDataList[i],
-                    (UINT64) pFrameOrderCoordinator->pStreamInfo, &firstFrameFirst));
+            CHK_STATUS(pFrameOrderCoordinator->frameTimestampCompareFn(&pFrameOrderCoordinator->putFrameTrackDataList[minIndex],
+                                                                       &pFrameOrderCoordinator->putFrameTrackDataList[i],
+                                                                       (UINT64) pFrameOrderCoordinator->pStreamInfo, &firstFrameFirst));
 
             if (!firstFrameFirst) {
                 minIndex = i;
@@ -262,8 +263,7 @@ STATUS frameOrderCoordinatorPutFrame(PKinesisVideoStream pKinesisVideoStream, PF
     pFrameOrderCoordinator = pKinesisVideoStream->pFrameOrderCoordinator;
     pKinesisVideoClient = pKinesisVideoStream->pKinesisVideoClient;
 
-    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                     pFrameOrderCoordinator->lock);
+    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
     locked = TRUE;
 
     for (i = 0; i < pKinesisVideoStream->streamInfo.streamCaps.trackInfoCount; ++i) {
@@ -275,8 +275,7 @@ STATUS frameOrderCoordinatorPutFrame(PKinesisVideoStream pKinesisVideoStream, PF
 
     CHK(pPutFrameTrackData != NULL || CHECK_FRAME_FLAG_END_OF_FRAGMENT(pUserFrame->flags), STATUS_MKV_TRACK_INFO_NOT_FOUND);
     if (!CHECK_FRAME_FLAG_END_OF_FRAGMENT(pUserFrame->flags)) {
-        CHK(pPutFrameTrackData->frameCount <= DEFAULT_MAX_FRAME_QUEUE_SIZE_PER_TRACK,
-            STATUS_MAX_FRAME_TIMESTAMP_DELTA_BETWEEN_TRACKS_EXCEEDED);
+        CHK(pPutFrameTrackData->frameCount <= DEFAULT_MAX_FRAME_QUEUE_SIZE_PER_TRACK, STATUS_MAX_FRAME_TIMESTAMP_DELTA_BETWEEN_TRACKS_EXCEEDED);
     }
 
     if (!pFrameOrderCoordinator->keyFrameDetected && CHECK_FRAME_FLAG_KEY_FRAME(pUserFrame->flags)) {
@@ -286,7 +285,7 @@ STATUS frameOrderCoordinatorPutFrame(PKinesisVideoStream pKinesisVideoStream, PF
     // In case of AV sync modes which explicitly set EoFR after each fragment, the fragmentation
     // should not be driven by the key-frame flags but rather EoFR.
     if ((pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE ||
-        pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE) &&
+         pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_PTS_ONE_MS_COMPENSATE) &&
         pFrameOrderCoordinator->keyFrameDetected && CHECK_FRAME_FLAG_END_OF_FRAGMENT(pUserFrame->flags)) {
         CHK(FALSE, STATUS_SETTING_KEY_FRAME_FLAG_WHILE_USING_EOFR);
     }
@@ -296,7 +295,7 @@ STATUS frameOrderCoordinatorPutFrame(PKinesisVideoStream pKinesisVideoStream, PF
         CHK_STATUS(putFrame(pKinesisVideoStream, pUserFrame));
         // Only set the eofr flag in fragment EoFR modes
         if (pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE ||
-             pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR) {
+            pKinesisVideoStream->streamInfo.streamCaps.frameOrderingMode == FRAME_ORDERING_MODE_MULTI_TRACK_AV_COMPARE_DTS_ONE_MS_COMPENSATE_EOFR) {
             pFrameOrderCoordinator->eofrPut = TRUE;
         }
 
@@ -307,7 +306,7 @@ STATUS frameOrderCoordinatorPutFrame(PKinesisVideoStream pKinesisVideoStream, PF
     CHK(NULL != (pFrame = (PFrame) MEMALLOC(overallSize)), STATUS_NOT_ENOUGH_MEMORY);
 
     *pFrame = *pUserFrame;
-    pFrame->frameData = (PBYTE) (pFrame + 1);
+    pFrame->frameData = (PBYTE)(pFrame + 1);
     MEMCPY(pFrame->frameData, pUserFrame->frameData, pUserFrame->size);
 
     CHK_STATUS(stackQueueEnqueue(pPutFrameTrackData->frameQueue, (UINT64) pFrame));
@@ -329,8 +328,7 @@ CleanUp:
     }
 
     if (locked) {
-        pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                           pFrameOrderCoordinator->lock);
+        pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
     }
 
     return retStatus;
@@ -349,8 +347,7 @@ STATUS frameOrderCoordinatorFlush(PKinesisVideoStream pKinesisVideoStream)
     pFrameOrderCoordinator = pKinesisVideoStream->pFrameOrderCoordinator;
     pKinesisVideoClient = pKinesisVideoStream->pKinesisVideoClient;
 
-    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                     pFrameOrderCoordinator->lock);
+    pKinesisVideoClient->clientCallbacks.lockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
     locked = TRUE;
 
     // put remaining frames order by their timestamp
@@ -361,8 +358,7 @@ STATUS frameOrderCoordinatorFlush(PKinesisVideoStream pKinesisVideoStream)
 CleanUp:
 
     if (locked) {
-        pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData,
-                                                           pFrameOrderCoordinator->lock);
+        pKinesisVideoClient->clientCallbacks.unlockMutexFn(pKinesisVideoClient->clientCallbacks.customData, pFrameOrderCoordinator->lock);
     }
 
     return retStatus;
